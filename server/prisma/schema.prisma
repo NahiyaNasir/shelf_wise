@@ -1,0 +1,271 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+// ─────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────
+
+enum BatchStatus {
+  ACTIVE
+  DISCOUNTED
+  EXPIRED
+  RETURNED
+}
+
+enum AlertTier {
+  THIRTY_DAYS
+  FIFTEEN_DAYS
+  SEVEN_DAYS
+  EXPIRED
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+enum MovementType {
+  RECEIVE
+  SALE
+  SPOILAGE
+  RETURN
+  ADJUSTMENT
+}
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  PICKED_UP
+  CREDITED
+  REJECTED
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// ─────────────────────────────────────────────────────────
+// CORE INVENTORY MODELS
+// ─────────────────────────────────────────────────────────
+
+model Product {
+  id           String           @id @default(uuid())
+  barcode      String           @unique
+  name         String
+  category     String?
+  unit         String           @default("pcs")
+  costPrice    Decimal          @db.Decimal(10, 2)
+  sellingPrice Decimal          @db.Decimal(10, 2)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  batches      InventoryBatch[]
+
+  @@index([barcode])
+}
+
+model InventoryBatch {
+  id           String          @id @default(uuid())
+  productId    String
+  product      Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  vendorId     String?
+  vendor       Vendor?         @relation(fields: [vendorId], references: [id])
+  batchNumber  String?
+  quantity     Int
+  expiryDate   DateTime
+  status       BatchStatus     @default(ACTIVE)
+  discountRate Float           @default(0.0)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  alerts       ExpiryAlert[]
+  movements    StockMovement[]
+  returns      VendorReturn[]
+
+  @@index([expiryDate, status])
+  @@index([productId])
+  @@index([vendorId])
+}
+
+model ExpiryAlert {
+  id            String            @id @default(uuid())
+  batchId       String
+  batch         InventoryBatch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  tier          AlertTier
+  isResolved    Boolean           @default(false)
+  resolvedById  String?
+  resolvedBy    User?             @relation("AlertResolver", fields: [resolvedById], references: [id])
+  createdAt     DateTime          @default(now())
+  notifications NotificationLog[]
+
+  @@index([isResolved])
+  @@index([batchId, tier])
+}
+
+// ─────────────────────────────────────────────────────────
+// PEOPLE & VENDORS
+// ─────────────────────────────────────────────────────────
+
+model Vendor {
+  id          String   @id @default(uuid())
+  name        String
+  contactName String?
+  email       String?
+  phone       String?
+  address     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  batches InventoryBatch[]
+  returns VendorReturn[]
+}
+
+model VendorReturn {
+  id          String         @id @default(uuid())
+  batchId     String
+  batch       InventoryBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  vendorId    String
+  vendor      Vendor         @relation(fields: [vendorId], references: [id])
+  quantity    Int
+  reason      String?
+  status      ReturnStatus   @default(REQUESTED)
+  requestedAt DateTime       @default(now())
+  resolvedAt  DateTime?
+
+  @@index([vendorId, status])
+  @@index([batchId])
+}
+
+// ─────────────────────────────────────────────────────────
+// AUDIT / MOVEMENT LOG
+// ─────────────────────────────────────────────────────────
+
+model StockMovement {
+  id        String         @id @default(uuid())
+  batchId   String
+  batch     InventoryBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  type      MovementType
+  quantity  Int
+  note      String?
+  userId    String?
+  user      User?          @relation(fields: [userId], references: [id])
+  createdAt DateTime       @default(now())
+
+  @@index([batchId])
+  @@index([type])
+}
+
+// ─────────────────────────────────────────────────────────
+// NOTIFICATIONS & DISCOUNT CONFIG
+// ─────────────────────────────────────────────────────────
+
+model NotificationLog {
+  id        String              @id @default(uuid())
+  alertId   String
+  alert     ExpiryAlert         @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  channel   NotificationChannel
+  recipient String
+  status    NotificationStatus  @default(PENDING)
+  sentAt    DateTime?
+  errorMsg  String?
+  createdAt DateTime            @default(now())
+
+  @@index([alertId])
+  @@index([status])
+}
+
+model DiscountTierConfig {
+  id           String    @id @default(uuid())
+  tier         AlertTier @unique
+  discountRate Float
+  updatedAt    DateTime  @updatedAt
+}
+
+model User {
+  id             String          @id
+  name           String
+  email          String
+  emailVerified  Boolean         @default(false)
+  image          String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  role           String?         @default("staff")
+  banned         Boolean?        @default(false)
+  banReason      String?
+  banExpires     DateTime?
+  sessions       Session[]
+  accounts       Account[]
+  stockMovements StockMovement[]
+  resolvedAlerts ExpiryAlert[]   @relation("AlertResolver")
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  impersonatedBy String?
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
