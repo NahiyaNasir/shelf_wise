@@ -1,14 +1,15 @@
 import "dotenv/config";
 import express from "express";
-import { IndexRoutes } from "./route/Route";
+
 import { auth } from "./app/lib/auth";
 import { toNodeHandler } from "better-auth/node";
 import cors from "cors";
 
 import cookieParser from "cookie-parser";
+import { IndexRoutes } from "./app/route/Route";
 
 const app = express();
-const port = Number(process.env.PORT) || 3000;
+const port = Number(process.env.PORT) || 5000;
 
 
 
